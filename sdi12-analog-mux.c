@@ -4,6 +4,8 @@
 #include "ad1724.h"
 #include "sdi12.h"
 #include "adg708.h"
+#include "nvm.h"
+#include "calibration_mode.h"
 
 // Pico W devices use a GPIO on the WIFI chip for the LED,
 // so when building for Pico W, CYW43_WL_GPIO_LED_PIN will be defined
@@ -57,6 +59,104 @@ void pico_set_led(bool led_on) {
     // Ask the wifi "driver" to set the GPIO on or off
     cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, led_on);
 #endif
+}
+
+// Calibration mode measurement function
+// Called by calibration mode to measure a specific RTD channel
+bool calibration_measure_rtd(uint8_t channel) {
+    // Validate channel (1-7)
+    if (channel < 1 || channel > 7) {
+        printf("ERROR: Invalid channel %d (must be 1-7)\n", channel);
+        return false;
+    }
+
+    uint8_t rtd_num = channel - 1;        // Convert to 0-based index
+    uint8_t mux_channel = channel;        // Mux channels are 1-7
+    uint8_t adc_channel_num = rtd_num;    // ADC channels are 0-6
+
+    printf("Calibration measurement: RTD %d (Mux Ch%d, ADC Ch%d)\n",
+           channel, mux_channel, adc_channel_num);
+
+    // Enable ADC channel
+    adc_enable_single_channel(adc_channel_num);
+
+    // Switch mux
+    if (!adg708_select_channel(mux_channel)) {
+        printf("ERROR: Failed to select mux channel %d\n", mux_channel);
+        return false;
+    }
+
+    // Wait for settling
+    sleep_ms(20);
+
+    // Dummy read to charge capacitors
+    adc_start_single_conversion();
+    uint8_t status;
+    int timeout = 100;
+    bool conversion_ready = false;
+
+    while (timeout > 0) {
+        adc_reg_read(AD7124_STATUS_REG, &status, 1);
+        if ((status & 0x80) == 0) {
+            conversion_ready = true;
+            break;
+        }
+        sleep_ms(10);
+        timeout--;
+    }
+
+    if (!conversion_ready) {
+        printf("ERROR: Dummy conversion timeout\n");
+        return false;
+    }
+
+    uint32_t dummy_data;
+    uint8_t dummy_channel;
+    adc_read_rtd_data(&dummy_data, &dummy_channel);
+
+    // Actual measurement
+    adc_start_single_conversion();
+    timeout = 100;
+    conversion_ready = false;
+
+    while (timeout > 0) {
+        adc_reg_read(AD7124_STATUS_REG, &status, 1);
+        if ((status & 0x80) == 0) {
+            conversion_ready = true;
+            break;
+        }
+        sleep_ms(10);
+        timeout--;
+    }
+
+    if (!conversion_ready) {
+        printf("ERROR: Conversion timeout\n");
+        return false;
+    }
+
+    // Read and display data
+    uint32_t rtd_data;
+    uint8_t read_channel;
+    if (adc_read_rtd_data(&rtd_data, &read_channel)) {
+        // Create a temporary config with NOMINAL r_ref for calibration measurements
+        // This ensures the Python calibration formula is mathematically correct
+        rtd_config_t cal_config = global_rtd_config;
+        cal_config.r_ref = 5030.0f;  // Use nominal value, not calibrated value
+
+        float resistance = adc_calculate_resistance(rtd_data, &cal_config);
+        float temperature = adc_calculate_temperature(rtd_data, &cal_config);
+
+        rtd_resistances[rtd_num] = resistance;
+        rtd_temperatures[rtd_num] = temperature;
+
+        printf("RTD %d: %.2fΩ, %.2f°C (Raw: 0x%06X)\n",
+               channel, resistance, temperature, rtd_data);
+
+        return true;
+    } else {
+        printf("ERROR: Failed to read RTD data\n");
+        return false;
+    }
 }
 
 // SDI-12 measurement callback
@@ -210,6 +310,19 @@ int main(){
     int rc = pico_led_init();
     hard_assert(rc == PICO_OK);
 
+    // Initialize NVM (Non-Volatile Memory)
+    printf("\n=== Initializing NVM ===\n");
+    nvm_data_t nvm_data;
+    bool nvm_valid = nvm_init();
+
+    if (nvm_valid) {
+        printf("NVM initialized successfully\n");
+        nvm_read(&nvm_data);
+    } else {
+        printf("NVM using default values (first boot or corrupted data)\n");
+        nvm_get_defaults(&nvm_data);
+    }
+
     // Initialize ADG708 analog mux
     printf("\n=== Initializing ADG708 Analog Mux ===\n");
     adg708_config_t mux_config = {
@@ -255,15 +368,22 @@ int main(){
 
     // Configure RTD measurement (PT100, 4-wire ratiometric configuration)
     // Note: The ADC channels are already configured for all 3 RTDs in adc_configure_rtd()
-    global_rtd_config.r_ref = 5030.0f;           // 5.03kΩ reference resistor (R19) - calibrated value
+    // Use calibrated values from NVM (default to 5030Ω if uncalibrated)
+    global_rtd_config.r_ref = nvm_data.calibration.r_ref_calibrated[0];  // Use calibrated reference resistor
     global_rtd_config.r_rtd_0 = 100.0f;          // PT100 RTD (100Ω at 0°C) - using potentiometer for test
-    global_rtd_config.alpha = 0.00385f;          // PT100 temperature coefficient
+    global_rtd_config.alpha = nvm_data.calibration.temp_coeff;  // Use calibrated temperature coefficient
     global_rtd_config.excitation_current = AD7124_IOUT_50UA;  // 50µA excitation current
     global_rtd_config.rtd_ainp = AD7124_AIN1;    // Dummy - not used for multi-channel
     global_rtd_config.rtd_ainm = AD7124_AIN2;    // Dummy - not used for multi-channel
     global_rtd_config.ref_ainp = AD7124_AIN0;    // Reference positive (across RREF1)
     global_rtd_config.ref_ainm = AD7124_AIN1;    // Reference negative (across RREF1)
     global_rtd_config.iout_pin = AD7124_AIN0;    // Excitation current output on AIN0
+
+    printf("Using NVM calibration data:\n");
+    printf("  R_ref: %.2f ohms\n", global_rtd_config.r_ref);
+    printf("  Alpha: %.8f\n", global_rtd_config.alpha);
+    printf("  ADC offset: %.2f\n", nvm_data.calibration.adc_offset);
+    printf("  ADC gain: %.6f\n", nvm_data.calibration.adc_gain);
 
     printf("Configuring RTD measurement system...\n");
     bool rtd_config_ok = adc_configure_rtd(&global_rtd_config);
@@ -286,11 +406,34 @@ int main(){
     sdi12_sensor_info_t sensor_info = {
         .address = '0',                     // Default address: 0
         .sdi_version = "14",                // SDI-12 version 1.4
-        .vendor_id = "PICODIY ",            // Vendor ID (8 chars)
-        .sensor_model = "PT100 ",           // Model (6 chars)
-        .sensor_version = "1.0",            // Version (3 chars)
-        .serial_number = "001"              // Serial number
+        .vendor_id = "GEMS",            // Vendor ID (8 chars)
+        .sensor_model = "GORGON",           // Model (6 chars)
+        .sensor_version = "1.0",            // Version (3 chars) - will be updated from NVM
+        .serial_number = "001"              // Serial number (will be updated from NVM)
     };
+
+    // Update serial number from NVM if available
+    if (strlen(nvm_data.manufacturing.device_serial) > 0 &&
+        strcmp(nvm_data.manufacturing.device_serial, "UNCALIBRATED") != 0) {
+        // Use first 3 chars of NVM serial (SDI-12 serial is limited to 3 chars)
+        strncpy(sensor_info.serial_number, nvm_data.manufacturing.device_serial, 3);
+        sensor_info.serial_number[3] = '\0';
+    }
+
+    // Update firmware version from NVM if available
+    if (strlen(nvm_data.manufacturing.firmware_version) > 0 &&
+        strcmp(nvm_data.manufacturing.firmware_version, "0.0") != 0) {
+        // Use first 3 chars of firmware version (SDI-12 version is limited to 3 chars)
+        strncpy(sensor_info.sensor_version, nvm_data.manufacturing.firmware_version, 3);
+        sensor_info.sensor_version[3] = '\0';
+    }
+
+    printf("SDI-12 Sensor Configuration:\n");
+    printf("  Address:    %c\n", sensor_info.address);
+    printf("  Vendor:     %s\n", sensor_info.vendor_id);
+    printf("  Model:      %s\n", sensor_info.sensor_model);
+    printf("  Version:    %s (from NVM FW version)\n", sensor_info.sensor_version);
+    printf("  Serial:     %s (from NVM serial)\n", sensor_info.serial_number);
 
     if (!sdi12_init(PIN_SDI12_DATA, &sensor_info)) {
         printf("SDI-12 initialization failed!\n");
@@ -305,7 +448,13 @@ int main(){
     // Register measurement callback
     sdi12_set_measurement_callback(sdi12_measurement_callback);
 
-    printf("SDI-12 sensor ready!\n");
+    // Initialize calibration mode
+    printf("\n=== Initializing Calibration Mode ===\n");
+    cal_mode_init();
+    cal_mode_set_measurement_callback(calibration_measure_rtd);
+    printf("Calibration mode ready\n");
+
+    printf("\nSDI-12 sensor ready!\n");
     printf("Address: %c\n", sensor_info.address);
     printf("Send SDI-12 commands on GPIO%d (requires 3.3V <-> 5V level shifter)\n", PIN_SDI12_DATA);
     printf("\nSupported commands:\n");
@@ -320,13 +469,133 @@ int main(){
     printf("  0M8!   - Measure Raspberry Pi Pico internal temperature\n");
     printf("  0M9!   - Measure AD7124 ADC internal temperature\n");
     printf("  0D0!   - Get measurement data (after aM command)\n");
+    printf("\n=== NVM Debug Commands ===\n");
+    printf("  nvm_dump           - Display all NVM data\n");
+    printf("  nvm_reset          - Factory reset NVM\n");
+    printf("  nvm_set_sn <sn>    - Set device serial number\n");
+    printf("  nvm_set_date <YY-MM-DD> - Set manufacturing date\n");
+    printf("  nvm_set_board <rev> - Set board revision\n");
+    printf("  nvm_cal_rref <ch> <val> - Set R_ref calibration (ch 0-6)\n");
+    printf("  nvm_cal_offset <ch> <val> - Set offset calibration (ch 0-6)\n");
+    printf("  nvm_cal_scale <ch> <val> - Set scale calibration (ch 0-6)\n");
+    printf("  nvm_set_hw_ver <ver> - Set hardware version\n");
+    printf("  nvm_set_fw_ver <ver> - Set firmware version\n");
+    printf("\n=== Calibration Mode Commands ===\n");
+    printf("  cal_mode_start       - Enter calibration mode\n");
+    printf("  cal_mode_stop        - Exit calibration mode\n");
+    printf("  cal_set_serial <sn>  - Set serial (cal mode)\n");
+    printf("  cal_set_hw_ver <ver> - Set HW version (cal mode)\n");
+    printf("  cal_set_fw_ver <ver> - Set FW version (cal mode)\n");
+    printf("  cal_set_date <date>  - Set date (cal mode)\n");
+    printf("  cal_measure <ch>     - Measure channel (cal mode)\n");
     printf("\n=== Main Loop: SDI-12 Command Processing ===\n");
     printf("RTD measurements are only taken when requested via SDI-12\n");
 
-    // Main loop - handle SDI-12 commands only
+    // Main loop - handle SDI-12 commands and check for UART input
+    char cmd_buffer[128];
+    int cmd_idx = 0;
+
     while (true) {
-        // Process SDI-12 commands
-        sdi12_task();
+        // Process SDI-12 commands (only if not in calibration mode)
+        if (!cal_mode_is_active()) {
+            sdi12_task();
+        }
+
+        // Check for UART commands (non-blocking)
+        int c = getchar_timeout_us(0);
+        if (c != PICO_ERROR_TIMEOUT) {
+            if (c == '\n' || c == '\r') {
+                if (cmd_idx > 0) {
+                    cmd_buffer[cmd_idx] = '\0';
+
+                    // Process NVM commands
+                    if (strcmp(cmd_buffer, "nvm_dump") == 0) {
+                        nvm_cmd_dump();
+                    } else if (strcmp(cmd_buffer, "nvm_reset") == 0) {
+                        nvm_cmd_reset();
+                    } else if (strncmp(cmd_buffer, "nvm_set_sn ", 11) == 0) {
+                        nvm_cmd_set_serial(cmd_buffer + 11);
+                    } else if (strncmp(cmd_buffer, "nvm_set_date ", 13) == 0) {
+                        nvm_cmd_set_date(cmd_buffer + 13);
+                    } else if (strncmp(cmd_buffer, "nvm_set_board ", 14) == 0) {
+                        nvm_cmd_set_board(cmd_buffer + 14);
+                    } else if (strncmp(cmd_buffer, "nvm_cal_rref ", 13) == 0) {
+                        int ch;
+                        float val;
+                        if (sscanf(cmd_buffer + 13, "%d %f", &ch, &val) == 2) {
+                            nvm_cmd_set_rref(ch, val);
+                        } else {
+                            printf("Usage: nvm_cal_rref <channel> <value>\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "nvm_cal_offset ", 15) == 0) {
+                        int ch;
+                        float val;
+                        if (sscanf(cmd_buffer + 15, "%d %f", &ch, &val) == 2) {
+                            nvm_cmd_set_offset(ch, val);
+                        } else {
+                            printf("Usage: nvm_cal_offset <channel> <value>\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "nvm_cal_scale ", 14) == 0) {
+                        int ch;
+                        float val;
+                        if (sscanf(cmd_buffer + 14, "%d %f", &ch, &val) == 2) {
+                            nvm_cmd_set_scale(ch, val);
+                        } else {
+                            printf("Usage: nvm_cal_scale <channel> <value>\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "nvm_set_hw_ver ", 15) == 0) {
+                        nvm_cmd_set_hw_version(cmd_buffer + 15);
+                    } else if (strncmp(cmd_buffer, "nvm_set_fw_ver ", 15) == 0) {
+                        nvm_cmd_set_fw_version(cmd_buffer + 15);
+                    }
+                    // Calibration mode commands
+                    else if (strcmp(cmd_buffer, "cal_mode_start") == 0) {
+                        cal_mode_enter();
+                    } else if (strcmp(cmd_buffer, "cal_mode_stop") == 0) {
+                        cal_mode_exit();
+                    } else if (strncmp(cmd_buffer, "cal_set_serial ", 15) == 0) {
+                        if (cal_mode_is_active()) {
+                            nvm_cmd_set_serial(cmd_buffer + 15);
+                        } else {
+                            printf("ERROR: Not in calibration mode\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "cal_set_hw_ver ", 15) == 0) {
+                        if (cal_mode_is_active()) {
+                            nvm_cmd_set_hw_version(cmd_buffer + 15);
+                        } else {
+                            printf("ERROR: Not in calibration mode\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "cal_set_fw_ver ", 15) == 0) {
+                        if (cal_mode_is_active()) {
+                            nvm_cmd_set_fw_version(cmd_buffer + 15);
+                        } else {
+                            printf("ERROR: Not in calibration mode\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "cal_set_date ", 13) == 0) {
+                        if (cal_mode_is_active()) {
+                            nvm_cmd_set_date(cmd_buffer + 13);
+                        } else {
+                            printf("ERROR: Not in calibration mode\n");
+                        }
+                    } else if (strncmp(cmd_buffer, "cal_measure ", 12) == 0) {
+                        if (cal_mode_is_active()) {
+                            int channel;
+                            if (sscanf(cmd_buffer + 12, "%d", &channel) == 1) {
+                                cal_mode_measure_channel(channel);
+                            } else {
+                                printf("Usage: cal_measure <channel>\n");
+                            }
+                        } else {
+                            printf("ERROR: Not in calibration mode\n");
+                        }
+                    }
+
+                    cmd_idx = 0;
+                }
+            } else if (cmd_idx < sizeof(cmd_buffer) - 1) {
+                cmd_buffer[cmd_idx++] = (char)c;
+            }
+        }
 
         // Small delay to prevent busy-waiting
         sleep_ms(1);

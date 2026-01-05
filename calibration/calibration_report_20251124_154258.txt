@@ -1,0 +1,73 @@
+================================================================================
+RTD Calibration Report
+================================================================================
+
+Date: 2025-11-24 15:42:58
+Port: /dev/ttyACM1
+Baudrate: 115200
+
+Calibration Results:
+--------------------------------------------------------------------------------
+Channel | Ref Ω  | Measured Ω | Std Dev | Cal R_ref | Samples
+--------------------------------------------------------------------------------
+  1     | 99.88  | NO DATA    | -       | -         | 0
+  2     | 99.75  | NO DATA    | -       | -         | 0
+  3     | 99.80  | NO DATA    | -       | -         | 0
+  4     | 99.67  | NO DATA    | -       | -         | 0
+  5     | 99.84  | NO DATA    | -       | -         | 0
+  6     | 99.66  | NO DATA    | -       | -         | 0
+  7     | 99.78  | NO DATA    | -       | -         | 0
+
+================================================================================
+Raw Measurements:
+================================================================================
+
+Channel 1:
+  Reference: 99.88 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+
+Channel 2:
+  Reference: 99.75 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+
+Channel 3:
+  Reference: 99.8 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+
+Channel 4:
+  Reference: 99.67 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+
+Channel 5:
+  Reference: 99.84 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+
+Channel 6:
+  Reference: 99.66 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+
+Channel 7:
+  Reference: 99.78 Ω
+  Measurements: []
+  Mean: 0.0000 Ω
+  Std Dev: 0.0000 Ω
+  Calibrated R_ref: 5030.00 Ω
+

@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(sdi12-analog-mux sdi12-analog-mux.c ad1724.c sdi12.c adg708.c)
+add_executable(sdi12-analog-mux sdi12-analog-mux.c ad1724.c sdi12.c adg708.c nvm.c calibration_mode.c)
 
 # Generate PIO header from .pio file
 pico_generate_pio_header(sdi12-analog-mux ${CMAKE_CURRENT_LIST_DIR}/sdi12_uart.pio)
@@ -61,6 +61,8 @@ target_link_libraries(sdi12-analog-mux
         hardware_spi
         hardware_pio
         hardware_adc
+        hardware_flash
+        hardware_sync
         )
 
 pico_add_extra_outputs(sdi12-analog-mux)
