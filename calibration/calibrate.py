@@ -19,6 +19,7 @@ class CalibrationData:
     channel: int
     reference_resistance: float  # Known reference resistance at 0°C
     measurements: List[float]
+    current_rref: float = 5030.0  # Current R_ref from device NVM
 
     @property
     def mean_resistance(self) -> float:
@@ -40,19 +41,17 @@ class CalibrationData:
         If we know the true R_RTD and measure ADC values, we can back-calculate R_ref:
         R_ref_calibrated = R_RTD_actual * (ADC_REF / ADC_RTD)
 
-        Since the firmware already calculates resistance using nominal R_ref,
-        we can derive the correction factor:
-        R_ref_calibrated = R_ref_nominal * (R_RTD_actual / R_measured)
+        Since the firmware already calculates resistance using the stored R_ref,
+        we use that value (read from device NVM) for accurate calibration:
+        R_ref_calibrated = R_ref_current * (R_RTD_actual / R_measured)
         """
         if self.mean_resistance == 0:
-            return 5030.0  # Default value
+            return self.current_rref  # Return current value if no measurements
 
-        # Assume nominal R_ref = 5030 ohms (from firmware)
-        R_REF_NOMINAL = 5030.0
-
-        # Calculate calibrated R_ref
+        # Use the current R_ref from device NVM (not a hardcoded value)
+        # This is what the firmware used to calculate the measured resistance
         correction_factor = self.reference_resistance / self.mean_resistance
-        calibrated = R_REF_NOMINAL * correction_factor
+        calibrated = self.current_rref * correction_factor
 
         return calibrated
 
@@ -62,13 +61,13 @@ class CalibrationSession:
 
     # Known reference resistances for channels 1-7 (PT100 at 0°C)
     REFERENCE_RESISTANCES = {
-        1: 99.88,
-        2: 99.75,
-        3: 99.80,
-        4: 99.93,
-        5: 99.84,
-        6: 99.66,
-        7: 99.78,
+        1: 99.82,
+        2: 99.80,
+        3: 99.85,
+        4: 99.88,
+        5: 99.87,
+        6: 99.81,
+        7: 99.76,
     }
 
     def __init__(self, port: str, baudrate: int = 115200):
@@ -77,6 +76,8 @@ class CalibrationSession:
         self.serial = None
         self.calibration_data = {}
         self.average_r_ref = 5030.0  # Default value, will be calculated
+        self.current_rref = 5030.0   # Current R_ref from device, read before calibration
+        self.serial_number = None    # Device serial number, set during calibration
 
         # Initialize calibration data for all channels
         for channel, ref_resistance in self.REFERENCE_RESISTANCES.items():
@@ -85,6 +86,12 @@ class CalibrationSession:
                 reference_resistance=ref_resistance,
                 measurements=[]
             )
+
+    def set_current_rref(self, rref: float):
+        """Set the current R_ref value for all channels"""
+        self.current_rref = rref
+        for channel in self.calibration_data:
+            self.calibration_data[channel].current_rref = rref
 
     def connect(self):
         """Connect to the device"""
@@ -136,12 +143,14 @@ class CalibrationSession:
         if self.serial and self.serial.is_open:
             self.serial.reset_input_buffer()
 
-    def enter_calibration_mode(self, serial_number: str, hw_version: str, fw_version: str):
+    def enter_calibration_mode(self, serial_number: str, hw_version: str, fw_version: str, board: str = "GORGON"):
         """Enter calibration mode on the device"""
+        self.serial_number = serial_number  # Store for report
         print("\n=== Entering Calibration Mode ===")
         print(f"Serial Number: {serial_number}")
         print(f"Hardware Version: {hw_version}")
         print(f"Firmware Version: {fw_version}")
+        print(f"Board: {board}")
 
         # Send calibration mode command
         self.send_command("cal_mode_start")
@@ -159,6 +168,10 @@ class CalibrationSession:
         time.sleep(0.2)
 
         self.send_command(f"cal_set_fw_ver {fw_version}")
+        time.sleep(0.2)
+
+        # Set board name
+        self.send_command(f"nvm_set_board {board}")
         time.sleep(0.2)
 
         # Get manufacturing date/time from system
@@ -262,6 +275,7 @@ class CalibrationSession:
     def calculate_calibration(self):
         """Calculate calibrated R_ref values from collected data"""
         print("\n=== Calibration Results ===\n")
+        print(f"Using current R_ref from device: {self.current_rref:.2f} Ω\n")
 
         print("Channel | Ref Ω  | Measured Ω | Std Dev | Cal R_ref | Samples")
         print("-" * 70)
@@ -324,7 +338,8 @@ class CalibrationSession:
         """Save calibration report to file"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"calibration_report_{timestamp}.txt"
+            sn = self.serial_number or "unknown"
+            filename = f"calibration_report_{sn}_{timestamp}.txt"
 
         filepath = f"/home/zach/Code/pico-debug/sdi12-analog-mux/calibration/{filename}"
 
@@ -332,6 +347,7 @@ class CalibrationSession:
             f.write("=" * 80 + "\n")
             f.write("RTD Calibration Report\n")
             f.write("=" * 80 + "\n\n")
+            f.write(f"Serial Number: {self.serial_number}\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Port: {self.port}\n")
             f.write(f"Baudrate: {self.baudrate}\n\n")
@@ -418,6 +434,46 @@ class CalibrationSession:
 
         return lines_read > 0
 
+    def read_current_rref(self):
+        """Read current R_ref calibration value from device NVM.
+
+        All channels share the same R_ref, so we just read Ch0's value.
+        Returns the R_ref value, or 5030.0 as default on failure.
+        """
+        # Flush any pending output
+        self.flush_input()
+        time.sleep(0.2)
+
+        # Send nvm_dump command
+        self.send_command("nvm_dump")
+        time.sleep(0.5)
+
+        # Read output and find first R_ref value
+        empty_count = 0
+        max_empty = 3
+
+        while empty_count < max_empty:
+            line = self.read_line(timeout=0.3)
+            if line:
+                empty_count = 0
+                # Parse line like "    Ch0: 5030.50"
+                if "Ch0:" in line:
+                    try:
+                        val_part = line.split(":")[1].strip()
+                        rref = float(val_part)
+                        print(f"Current R_ref from device: {rref:.2f} Ω")
+                        # Drain remaining output
+                        while self.read_line(timeout=0.1):
+                            pass
+                        return rref
+                    except (ValueError, IndexError):
+                        pass
+            else:
+                empty_count += 1
+
+        print("Warning: Could not read R_ref from device, using default 5030.0 Ω")
+        return 5030.0
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -436,6 +492,8 @@ def main():
                        help='Hardware version (default: 1.0)')
     parser.add_argument('--fw-version', default='1.0',
                        help='Firmware version (default: 1.0)')
+    parser.add_argument('--board', default='GORGON',
+                       help='Board name (default: GORGON)')
     parser.add_argument('--no-write', action='store_true',
                        help='Skip writing calibration to device (dry run)')
     parser.add_argument('--read-nvm', action='store_true',
@@ -469,11 +527,17 @@ def main():
                 return 1
 
         # Normal calibration mode
+        # Read current R_ref from device before calibration
+        # This is critical for accurate calibration calculations
+        current_rref = session.read_current_rref()
+        session.set_current_rref(current_rref)
+
         # Enter calibration mode
         session.enter_calibration_mode(
             serial_number=args.serial,
             hw_version=args.hw_version,
-            fw_version=args.fw_version
+            fw_version=args.fw_version,
+            board=args.board
         )
 
         # Collect measurements

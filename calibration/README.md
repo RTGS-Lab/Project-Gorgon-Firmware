@@ -1,150 +1,150 @@
-# RTD Calibration Tool
+# GORGON RTD Calibration Tool
 
-This directory contains the calibration tool for the SDI-12 Analog Multiplexer.
-
-## Overview
-
-The calibration process:
-1. Connects to the device via UART
-2. Enters calibration mode on the device
-3. Collects resistance measurements from all 7 RTD channels over 10 minutes
-4. Calculates calibrated R_ref values for each channel
-5. Writes the calibration data to the device's non-volatile memory
-6. Generates a calibration report
+This directory contains the calibration tool for the GORGON SDI-12 Analog Multiplexer.
 
 ## Requirements
 
-```bash
-pip install pyserial
-```
+- VS Code with Pico extension installed
+- Pico debugger (picoprobe or similar)
+- 12V power supply with current limiting
+- Python 3 with pyserial:
+  ```bash
+  pip install pyserial
+  ```
 
-## Usage
+## Complete Calibration Process
 
-### Calibration Mode
+### Step 1: Flash Firmware
 
-Basic usage:
-```bash
-./calibrate.py /dev/ttyUSB0 -s DEVICE001
-```
+1. **Connect USB** to the GORGON board
+2. **Connect 12V power supply** to 12V and GND pins (set current limit to 130mA)
+3. **Short the BOOTSEL jumper** (two pins next to USB on the board)
+4. **Turn on power** - RPI-RP2 drive should mount to the file system
+5. **Build firmware** in VS Code using the Pico extension "Compile Project" command
+6. **Copy the .uf2 file** from `build/sdi12-analog-mux.uf2` to the RPI-RP2 drive
+7. **Wait for automatic unmount**
+8. **Turn off power** and remove the BOOTSEL jumper
 
-Full options:
+### Step 2: Start Debugger
+
+1. **Plug in the debugger** to both the GORGON board and your computer
+2. **Turn power back on**
+3. **Press "Debug Project"** in VS Code - debugger should stop at `int main()`
+4. **Press the play button** - firmware is now running
+
+### Step 3: Measure Reference Resistors
+
+1. **Measure each reference resistor** with a multimeter
+2. **Update the values** in `calibrate.py` (around line 64):
+   ```python
+   REFERENCE_RESISTANCES = {
+       1: 99.82,  # Replace with your measured values
+       2: 99.80,
+       3: 99.85,
+       4: 99.88,
+       5: 99.87,
+       6: 99.81,
+       7: 99.76,
+   }
+   ```
+
+### Step 4: Run Calibration
+
+1. Navigate to the calibration directory:
+   ```bash
+   cd /path/to/sdi12-analog-mux/calibration
+   ```
+
+2. Find the debugger serial port:
+   ```bash
+   ls /dev/ttyACM*
+   ```
+
+3. Run calibration (10 minutes, 10-second intervals):
+   ```bash
+   ./calibrate.py /dev/ttyACM0 -s 001 -d 10 -i 10
+   ```
+
+   Replace `/dev/ttyACM0` with your debugger's serial port and `001` with the device's 3-digit serial number.
+
+4. **Wait for calibration to complete**
+
+5. **Type `yes`** when prompted to write calibration to NVM
+
+### Step 5: Finish
+
+1. Turn off power
+2. Unplug debugger and USB
+3. Device is now calibrated
+
+## Command Reference
+
 ```bash
 ./calibrate.py <port> -s <serial_number> [options]
 
-Arguments:
-  port                  Serial port (e.g., /dev/ttyUSB0 or COM3)
-  -s, --serial         Device serial number (required for calibration)
+Required:
+  port                  Debugger serial port (e.g., /dev/ttyACM0)
+  -s, --serial          Device serial number (3 digits, e.g., 001)
 
 Options:
-  -b, --baudrate       Baud rate (default: 115200)
-  -d, --duration       Calibration duration in minutes (default: 10)
-  -i, --interval       Measurement interval in seconds (default: 30)
-  --hw-version         Hardware version (default: 1.0)
-  --fw-version         Firmware version (default: 1.0)
-  --no-write           Skip writing to device (dry run)
-  --read-nvm           Read and display NVM contents (no calibration)
+  -d, --duration        Calibration duration in minutes (default: 10)
+  -i, --interval        Measurement interval in seconds (default: 30)
+  --hw-version          Hardware version (default: 1.0)
+  --fw-version          Firmware version (default: 1.0)
+  --board               Board name (default: GORGON)
+  --no-write            Dry run - skip writing to device
+  --read-nvm            Read and display current NVM contents only
 ```
 
-### Read NVM Mode
+## Examples
 
-To read current NVM contents without calibrating:
+Standard calibration:
 ```bash
-./calibrate.py /dev/ttyUSB0 --read-nvm
+./calibrate.py /dev/ttyACM0 -s 003 -d 10 -i 10
 ```
 
-This displays:
-- Device serial number
-- Hardware and firmware versions
-- Manufacturing date
-- All calibration values (R_ref for each channel)
-- NVM header information (magic, version, CRC32)
-
-## Example
-
-Calibrate device with serial number "TEST-001234":
+Quick test (1 minute):
 ```bash
-./calibrate.py /dev/ttyUSB0 \
-    -s TEST-001234 \
-    --hw-version 1.0 \
-    --fw-version 1.0 \
-    -d 10 \
-    -i 30
-```
-
-Short calibration for testing (1 minute):
-```bash
-./calibrate.py /dev/ttyUSB0 -s TEST-001234 -d 1 -i 10
+./calibrate.py /dev/ttyACM0 -s 003 -d 1 -i 10 --no-write
 ```
 
 Read current NVM values:
 ```bash
-./calibrate.py /dev/ttyUSB0 --read-nvm
+./calibrate.py /dev/ttyACM0 --read-nvm
 ```
 
 ## Reference Resistances
 
-The calibration uses the following known reference resistances (at 0°C):
+The calibration uses precision reference resistors. Current values configured in `calibrate.py`:
 
-| Channel | Reference Resistance (Ω) |
-|---------|--------------------------|
-| 1       | 99.88                    |
-| 2       | 99.75                    |
-| 3       | 99.80                    |
-| 4       | 99.67                    |
-| 5       | 99.84                    |
-| 6       | 99.66                    |
-| 7       | 99.78                    |
+| Channel | Reference Resistance |
+|---------|---------------------|
+| 1       | 99.82 Ω             |
+| 2       | 99.80 Ω             |
+| 3       | 99.85 Ω             |
+| 4       | 99.88 Ω             |
+| 5       | 99.87 Ω             |
+| 6       | 99.81 Ω             |
+| 7       | 99.76 Ω             |
 
-## Calibration Process
-
-1. **Setup**: Connect all 7 RTD reference resistors to the device channels
-2. **Start**: Run the calibration script with device serial number
-3. **Data Collection**: Script collects measurements every 30 seconds for 10 minutes
-4. **Calculation**: Calculates individual R_ref for each channel, then averages them
-5. **Review**: Review calibration results and averaged R_ref value
-6. **Write**: Averaged R_ref is written to all 7 channels in device NVM
-7. **Report**: Calibration report is saved to file
-
-**Note**: The calibration uses a single averaged R_ref value for all channels since they share the same reference resistor.
-
-## Output Files
-
-Calibration reports are saved as:
-```
-calibration_report_YYYYMMDD_HHMMSS.txt
-```
-
-The report includes:
-- Calibration results summary
-- Statistical analysis (mean, standard deviation)
-- Calibrated R_ref values
-- Raw measurement data
+To update these values, edit the `REFERENCE_RESISTANCES` dict in `calibrate.py` (around line 64).
 
 ## Troubleshooting
 
-**Connection Issues**:
-- Check serial port permissions: `sudo chmod 666 /dev/ttyUSB0`
-- Verify correct port: `ls /dev/ttyUSB*`
-- Check baud rate matches firmware (115200)
+**No serial port found:**
+- Ensure debugger is connected and powered
+- Check port with `ls /dev/ttyACM*`
+- Try `sudo chmod 666 /dev/ttyACM0` if permission denied
 
-**Measurement Failures**:
-- Ensure device is not in SDI-12 mode during calibration
-- Check RTD connections
-- Verify reference resistors are at stable temperature (0°C ice bath)
+**Device not entering BOOTSEL mode:**
+- Ensure BOOTSEL jumper is shorted before powering on
+- Check USB connection
 
-**Calibration Mode Not Entering**:
-- Update firmware with calibration mode support
-- Check UART output for error messages
-- Verify firmware version supports calibration commands
+**Calibration measurements failing:**
+- Check RTD reference resistor connections
+- Verify firmware is running (use debugger play button)
+- Check current limit is set to 130mA
 
-## Firmware Commands
-
-The calibration script uses these firmware commands:
-
-- `cal_mode_start` - Enter calibration mode
-- `cal_mode_stop` - Exit calibration mode
-- `cal_set_serial <sn>` - Set device serial number
-- `cal_set_hw_ver <ver>` - Set hardware version
-- `cal_set_fw_ver <ver>` - Set firmware version
-- `cal_set_date <YYYY-MM-DD>` - Set manufacturing date
-- `cal_measure <channel>` - Measure specific RTD channel (1-7)
+**High standard deviation in results:**
+- Increase calibration duration (-d 15 or higher)
+- Check for loose connections
