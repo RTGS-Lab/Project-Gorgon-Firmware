@@ -1,0 +1,130 @@
+RTD TESTING DATA ANALYSIS - WEEK OF DEC 2-9, 2025
+==================================================
+Date: December 9, 2025
+Device: Guadalupe (e00fce6885951c63c0e86719)
+Test Period: Dec 2 - Dec 9, 2025 (7.78 days)
+
+FOLDER STRUCTURE
+================
+
+All analysis folders are self-contained with their source data files.
+
+1. 100ohm_test_Week_Dec02-09/
+   - Test period: Dec 2-9 (full week analysis)
+   - Configuration: RTD2-6 = actual RTDs, RTD1 & RTD7 = reference resistors
+   - Data files:
+     * Gems_Demo_2025_12_02_to_2025_12_09_23_59_59_20251209_125847.csv (9.6M raw)
+     * Gems_Demo_2025_12_02_to_2025_12_09_23_59_59_20251209_125847_parsed_20251209_130617.csv (69M parsed)
+   - Contains: Plots, statistics, analysis script, README.md
+
+2. RTD_Analysis_Mon_Dec02/ through RTD_Analysis_Sun_Dec08/
+   - Seven individual night folders (7pm to 9am each)
+   - Same data files as weekly analysis
+   - Each contains: Correlation scatter plots, time series, statistics CSV, summary text
+
+DATA FILES IN EACH FOLDER
+==========================
+
+100ohm_test_Week_Dec02-09:
+  - analyze_rtds_vs_acclima_week_dec02-09.py
+  - Gems_Demo_2025_12_02_to_2025_12_09_23_59_59_20251209_125847.csv (9.6M)
+  - Gems_Demo_2025_12_02_to_2025_12_09_23_59_59_20251209_125847_parsed_20251209_130617.csv (69M)
+  - reference_resistor_stability_dec02-09.csv
+  - rtd_acclima_correlation_stats_dec02-09.csv
+  - rtd_timeseries_comparison_dec02-09.png
+  - rtd_vs_acclima_correlation_dec02-09.png
+  - README.md
+
+Each RTD_Analysis_* folder:
+  - Gems_Demo_2025_12_02_to_2025_12_09_23_59_59_20251209_125847.csv (9.6M)
+  - Gems_Demo_2025_12_02_to_2025_12_09_23_59_59_20251209_125847_parsed_20251209_130617.csv (69M)
+  - *_correlation_scatter.png
+  - *_correlation_stats.csv
+  - *_reference_resistor_stats.csv
+  - *_SUMMARY.txt
+  - *_timeseries.png
+
+KEY FINDINGS
+============
+
+Week-Long Analysis (Dec 2 - Dec 9):
+  RTD vs Acclima Correlation (2160 samples each):
+    - RTD6: R=0.9855, R²=0.9713 (Best! 97.13% variance explained)
+    - RTD2: R=0.9839, R²=0.9680
+    - RTD5: R=0.9839, R²=0.9681
+    - RTD3: R=0.9830, R²=0.9663
+    - RTD4: R=0.9808, R²=0.9619
+    - All show excellent correlation with Acclima ground truth
+    - Systematic offsets: -1.7°C to -2.3°C (can be calibrated)
+
+  Reference Resistor Stability:
+    - RTD1 (99.88Ω): Measured 100.06Ω (+0.18%, very stable)
+    - RTD7 (99.78Ω): Measured 99.40Ω (-0.38%, very stable)
+    - No drift detected over 7+ days
+    - Excellent validation of measurement system
+
+Best Night Performance:
+  Thursday Dec 5: All RTDs showed R² > 0.97 (outstanding!)
+    - RTD2: R²=0.9735
+    - RTD3: R²=0.9696
+    - RTD4: R²=0.9666
+    - RTD5: R²=0.9679
+    - RTD6: R²=0.9683
+
+Temperature Range During Test:
+  - Acclima: 9.3°C to 24.6°C (15.3°C range)
+  - Good temperature variation for correlation analysis
+
+All Folders Are Self-Contained:
+  - Each folder now contains its own source data files
+  - No external dependencies on rtgs-lab-tools/data/
+  - Can be moved, archived, or shared independently
+
+COMPARISON WITH PREVIOUS WEEK (Nov 26 - Dec 2)
+==============================================
+
+Both weeks show consistent excellent performance:
+
+Nov 26 - Dec 2:
+  - RTD6: R²=0.968 (best)
+  - All RTDs: R² > 0.96
+
+Dec 2 - Dec 9:
+  - RTD6: R²=0.971 (best, slight improvement!)
+  - All RTDs: R² > 0.96
+
+Reference resistor measurements remain consistent between weeks:
+  - RTD1: ~100.06Ω in both weeks
+  - RTD7: ~99.40Ω in both weeks
+
+This consistency demonstrates:
+  ✓ Excellent sensor stability
+  ✓ Reliable measurement system
+  ✓ No sensor degradation over time
+  ✓ Reproducible calibration results
+
+USAGE
+=====
+
+To reproduce any analysis:
+1. Navigate to the folder
+2. Run the analysis script in that folder (for weekly analysis only)
+3. All data files are present locally
+4. Results will match the existing plots and statistics
+
+To view results:
+- Open PNG files for visualizations
+- Open CSV files in spreadsheet software
+- Open TXT files for quick summaries
+- Open README.md for detailed explanations
+
+NOTES
+=====
+
+- All timestamps are in local time (CST)
+- Excitation current: 50µA for all measurements
+- Configuration: RTD1 & RTD7 = reference resistors (99.88Ω, 99.78Ω)
+- Configuration: RTD2-6 = actual PT100 RTD sensors
+- Ground truth: Acclima soil temperature sensor
+- Night analyses use 7pm-9am time windows for stable overnight conditions
+- Extracted: 11,294 raw records → 246,187 parsed measurements

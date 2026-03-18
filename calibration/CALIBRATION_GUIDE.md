@@ -7,7 +7,7 @@ This guide describes the complete calibration process for the SDI-12 Analog Mult
 ## Prerequisites
 
 ### Hardware Setup
-1. **Reference Resistors**: 7 precision reference resistors at 0°C (ice bath or temperature chamber)
+1. **Reference Resistors**: 7 precision reference resistors with known values (measured with calibrated multimeter)
    - Channel 1: 99.88 Ω
    - Channel 2: 99.75 Ω
    - Channel 3: 99.80 Ω
@@ -16,11 +16,13 @@ This guide describes the complete calibration process for the SDI-12 Analog Mult
    - Channel 6: 99.66 Ω
    - Channel 7: 99.78 Ω
 
+   **Note**: These are example values. Measure your actual reference resistors with a calibrated multimeter and update the script accordingly.
+
 2. **Test Setup**:
    - Device powered via USB or external 5V supply
    - UART connection (115200 baud, 8N1)
    - All 7 RTD channels connected to reference resistors
-   - Temperature-stable environment (0°C ice bath recommended)
+   - Room temperature environment (no ice bath required)
 
 ### Software Requirements
 ```bash
@@ -32,13 +34,12 @@ pip install pyserial
 
 ### Step 1: Hardware Preparation
 
-1. **Ice Bath Setup** (for 0°C reference):
+1. **Reference Resistor Setup**:
    ```
-   - Fill insulated container with crushed ice
-   - Add distilled water to fill gaps
-   - Stir thoroughly to ensure 0°C throughout
-   - Submerge reference resistors in waterproof enclosure
-   - Wait 15 minutes for thermal equilibrium
+   - Measure each reference resistor with a calibrated multimeter
+   - Record the exact resistance values for each channel
+   - Update the calibration script with your measured values
+   - Connect resistors using 4-wire configuration
    ```
 
 2. **Connect Device**:
@@ -120,7 +121,7 @@ Channels Used:            7
 ```
 
 **Quality Checks**:
-- **Per-Channel Std Dev**: Should be < 0.05 Ω (good thermal stability)
+- **Per-Channel Std Dev**: Should be < 0.05 Ω (good measurement stability)
 - **Sample Count**: Should match expected (e.g., 20 samples for 10 min @ 30s)
 - **Cal R_ref Range**: Typically 5025-5035 Ω (nominal 5030 Ω ± 0.1%)
 - **Average R_ref Std Dev**: Should be < 1.0 Ω (channel-to-channel consistency)
@@ -325,13 +326,13 @@ Channel | Ref Ω  | Measured Ω | Std Dev | Cal R_ref | Samples
 ```
 
 **Causes**:
-- Temperature not stable (ice bath melting, uneven temperature)
+- Temperature drift in environment
 - Poor electrical connections
 - Electromagnetic interference
 - Insufficient settling time
 
 **Solutions**:
-- Ensure ice bath is well-stirred and at 0°C throughout
+- Allow system to reach thermal equilibrium before calibrating
 - Increase measurement duration (-d 30)
 - Increase interval between measurements (-i 60)
 - Check for loose connections
@@ -357,15 +358,15 @@ Channel | Cal R_ref
 ```
 
 **Causes**:
-- Reference resistor value incorrect
+- Reference resistor value entered incorrectly in script
 - Wiring error (reversed connections)
 - ADC configuration issue
-- Reference resistor not at 0°C
+- Incorrect 4-wire connection
 
 **Solutions**:
-- Verify reference resistor values with multimeter
-- Check 4-wire connections (proper pairs)
-- Ensure resistors are at thermal equilibrium (0°C)
+- Verify reference resistor values with calibrated multimeter
+- Check 4-wire connections (proper pairs: 2 current, 2 sense)
+- Ensure script has correct reference resistor values
 - Verify excitation current is correct (50 µA)
 
 ## Manual Calibration (Without Script)
@@ -420,10 +421,10 @@ If the Python script is unavailable, you can calibrate manually:
 
 ## Best Practices
 
-1. **Temperature Stability**:
-   - Allow 15+ minutes for thermal equilibrium
-   - Monitor ice bath temperature during calibration
-   - Use insulated container to minimize temperature drift
+1. **Environment Stability**:
+   - Allow 15+ minutes for system to reach thermal equilibrium
+   - Perform calibration in stable room temperature environment
+   - Avoid calibrating near heat sources or HVAC vents
 
 2. **Electrical Connections**:
    - Use short, twisted-pair wires for RTD connections
@@ -459,9 +460,9 @@ Device Information:
   Calibration Date:  2025-11-24
 
 Reference Standards:
-  Standard:          NIST-traceable PT100 reference resistors
+  Standard:          Precision reference resistors (measured with calibrated multimeter)
   Certificate No:    REF-2025-001
-  Uncertainty:       ±0.01 Ω @ 0°C
+  Uncertainty:       ±0.01 Ω
 
 Calibration Results (per channel):
   Channel 1:  5032.15 Ω  (Std Dev: 0.0234 Ω, n=20)

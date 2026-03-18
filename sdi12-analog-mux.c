@@ -143,8 +143,8 @@ bool calibration_measure_rtd(uint8_t channel) {
         rtd_config_t cal_config = global_rtd_config;
         cal_config.r_ref = 5030.0f;  // Use nominal value, not calibrated value
 
-        float resistance = adc_calculate_resistance(rtd_data, &cal_config);
-        float temperature = adc_calculate_temperature(rtd_data, &cal_config);
+        float resistance = adc_calculate_resistance(rtd_data, &cal_config, rtd_num);
+        float temperature = adc_calculate_temperature(rtd_data, &cal_config, rtd_num);
 
         rtd_resistances[rtd_num] = resistance;
         rtd_temperatures[rtd_num] = temperature;
@@ -280,9 +280,9 @@ bool sdi12_measurement_callback(uint8_t measurement_index, sdi12_measurement_t *
     uint32_t rtd_data;
     uint8_t read_channel;
     if (adc_read_rtd_data(&rtd_data, &read_channel)) {
-        // Calculate resistance and temperature
-        float resistance = adc_calculate_resistance(rtd_data, &global_rtd_config);
-        float temperature = adc_calculate_temperature(rtd_data, &global_rtd_config);
+        // Calculate resistance and temperature (rtd_num is 0-based channel index)
+        float resistance = adc_calculate_resistance(rtd_data, &global_rtd_config, rtd_num);
+        float temperature = adc_calculate_temperature(rtd_data, &global_rtd_config, rtd_num);
 
         // Store in measurement data structure
         rtd_resistances[rtd_num] = resistance;
@@ -372,7 +372,7 @@ int main(){
     global_rtd_config.r_ref = nvm_data.calibration.r_ref_calibrated[0];  // Use calibrated reference resistor
     global_rtd_config.r_rtd_0 = 100.0f;          // PT100 RTD (100Ω at 0°C) - using potentiometer for test
     global_rtd_config.alpha = nvm_data.calibration.temp_coeff;  // Use calibrated temperature coefficient
-    global_rtd_config.excitation_current = AD7124_IOUT_50UA;  // 50µA excitation current
+    global_rtd_config.excitation_current = AD7124_IOUT_500UA;  // 500µA excitation current (max safe with 5kΩ R_ref)
     global_rtd_config.rtd_ainp = AD7124_AIN1;    // Dummy - not used for multi-channel
     global_rtd_config.rtd_ainm = AD7124_AIN2;    // Dummy - not used for multi-channel
     global_rtd_config.ref_ainp = AD7124_AIN0;    // Reference positive (across RREF1)

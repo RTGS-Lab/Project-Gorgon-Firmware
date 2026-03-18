@@ -109,6 +109,7 @@
 #define AD7124_IOUT_500UA   0x4
 #define AD7124_IOUT_750UA   0x5
 #define AD7124_IOUT_1000UA  0x6
+#define AD7124_IOUT_100NA   0x7  // 0.1µA = 100nA
 
 // Filter register bits
 #define AD7124_FILT_REG_FILTER(x)       (((x) & 0x7) << 21)
@@ -145,9 +146,10 @@ bool adc_configure_rtd(const rtd_config_t *config);
 void adc_enable_single_channel(uint8_t channel);
 void adc_start_single_conversion(void);
 bool adc_read_rtd_data(uint32_t *rtd_data, uint8_t *channel);
-float adc_calculate_temperature(uint32_t rtd_data, const rtd_config_t *config);
-float adc_calculate_resistance(uint32_t rtd_data, const rtd_config_t *config);
+float adc_calculate_temperature(uint32_t rtd_data, const rtd_config_t *config, uint8_t channel);
+float adc_calculate_resistance(uint32_t rtd_data, const rtd_config_t *config, uint8_t channel);
 float adc_read_internal_temperature(void);
 float pico_read_internal_temperature(void);
+float adc_measure_vref(float expected_vref);
 
 #endif // AD7124_H

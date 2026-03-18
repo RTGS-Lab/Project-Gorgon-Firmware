@@ -1,0 +1,110 @@
+RTD TESTING DATA ANALYSIS - COMPLETE SUMMARY
+=============================================
+Date: December 2, 2025
+Device: Guadalupe (e00fce6885951c63c0e86719)
+Test Period: Nov 24 - Dec 2, 2025
+
+FOLDER STRUCTURE
+================
+
+All analysis folders are now self-contained with their source data files.
+
+1. 100ohm_test_Mon_Nov24/
+   - Test date: Nov 24-25 (initial 100Ω resistor test, single day)
+   - Configuration: All RTDs with 100Ω resistors (RTD1 = 99.88Ω, RTD7 = 99.78Ω)
+   - Data files:
+     * Gems_Demo_2025_11_24_to_2025_11_25_23_59_59_20251125_093550.csv (raw)
+     * Gems_Demo_2025_11_24_to_2025_11_25_23_59_59_20251125_093550_parsed_20251125_093812.csv (parsed)
+   - Contains: Plots, statistics, analysis script, README
+
+2. 100ohm_test_Week_Nov25-Dec02/
+   - Test period: Nov 26 - Dec 2 (full week, excluding Nov 25 configuration change)
+   - Configuration: RTD2-6 = actual RTDs, RTD1 & RTD7 = reference resistors
+   - Data files:
+     * Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544.csv (raw)
+     * Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544_parsed_20251202_115559.csv (parsed)
+   - Contains: Full week correlation analysis, reference resistor stability
+
+3. RTD_Analysis_Tue_Nov26/ through RTD_Analysis_Sun_Dec01/
+   - Six individual night folders (7pm to 9am each)
+   - Each contains same source data files as weekly analysis
+   - Each has: Correlation scatter plots, time series, statistics CSV, summary text
+
+DATA FILES IN EACH FOLDER
+==========================
+
+100ohm_test_Mon_Nov24:
+  - 100ohm_test_results.png
+  - 100ohm_test_statistics.txt
+  - analyze_100ohm_test.py
+  - Gems_Demo_2025_11_24_to_2025_11_25_23_59_59_20251125_093550.csv (2.0M)
+  - Gems_Demo_2025_11_24_to_2025_11_25_23_59_59_20251125_093550_parsed_20251125_093812.csv (15M)
+  - README.md
+
+100ohm_test_Week_Nov25-Dec02:
+  - analyze_rtds_vs_acclima_week.py
+  - Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544.csv (9.4M)
+  - Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544_parsed_20251202_115559.csv (68M)
+  - reference_resistor_stability.csv
+  - rtd_acclima_correlation_stats.csv
+  - rtd_timeseries_comparison.png
+  - rtd_vs_acclima_correlation.png
+
+Each RTD_Analysis_* folder:
+  - Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544.csv (9.4M)
+  - Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544_parsed_20251202_115559.csv (68M)
+  - *_correlation_scatter.png
+  - *_correlation_stats.csv
+  - *_reference_resistor_stats.csv
+  - *_SUMMARY.txt
+  - *_timeseries.png
+
+KEY FINDINGS
+============
+
+Week-Long Analysis (Nov 26 - Dec 2):
+  RTD vs Acclima Correlation:
+    - RTD6: R=0.984, R²=0.968 (Best!)
+    - RTD2: R=0.983, R²=0.966
+    - RTD5: R=0.983, R²=0.966
+    - RTD3: R=0.982, R²=0.964
+    - RTD4: R=0.980, R²=0.961
+    - All show excellent correlation with Acclima ground truth
+    - Systematic offsets: -1.6 to -2.2°C (can be calibrated)
+
+  Reference Resistor Stability:
+    - RTD1 (99.88Ω): Measured 100.06Ω (+0.18%, very stable)
+    - RTD7 (99.78Ω): Measured 99.39Ω (-0.39%, very stable)
+    - No drift detected over 6+ days
+    - Excellent validation of measurement system
+
+Best Night Performance:
+  Wednesday Nov 27: All RTDs showed R² > 0.97 (outstanding!)
+
+All Folders Are Self-Contained:
+  - Each folder now contains its own source data files
+  - No external dependencies on rtgs-lab-tools/data/
+  - Can be moved, archived, or shared independently
+
+USAGE
+=====
+
+To reproduce any analysis:
+1. Navigate to the folder
+2. Run the analysis script in that folder
+3. All data files are present locally
+4. Results will match the existing plots and statistics
+
+To view results:
+- Open PNG files for visualizations
+- Open CSV files in spreadsheet software
+- Open TXT files for quick summaries
+- Open README.md files for detailed explanations
+
+NOTES
+=====
+
+- Nov 25 data excluded from weekly analysis due to configuration change
+- Night analyses use 7pm-9am time windows for stable overnight conditions
+- All timestamps are in local time (CST)
+- Excitation current: 50µA for all measurements

@@ -76,7 +76,7 @@ Output: `build/sdi12-analog-mux.uf2`
 
 ### Flashing
 
-1. Hold BOOTSEL button (or short BOOTSEL jumper) while connecting USB
+1. Short the BOOTSEL jumper (two pins next to micro USB) while connecting USB
 2. Copy `sdi12-analog-mux.uf2` to the mounted RPI-RP2 drive
 3. Device reboots automatically
 

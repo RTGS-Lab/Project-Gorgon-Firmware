@@ -1,0 +1,147 @@
+COMPLETE RTD TESTING FOLDER INVENTORY
+======================================
+Updated: December 2, 2025
+All folders now contain their source data files
+
+FOLDER LIST BY TEST TYPE
+=========================
+
+1. WEEKEND RTD TESTING (Nov 21-23, 2025)
+   ----------------------------------------
+   Configuration: RTD1 = actual PT100, RTD2-7 = fixed resistors
+   Device: Guadalupe
+   Excitation: 50µA
+   
+   Folders:
+   --------
+   a) 50uACurrentKestrel_Fri_Nov21/
+      Period: Friday Nov 21 night
+      Data: Gems_Demo_2025_11_21_to_2025_11_25_23_59_59_20251124_124729.csv (4.7M)
+      Parsed: Gems_Demo_2025_11_21_to_2025_11_25_23_59_59_20251124_124729_parsed_20251124_125549.csv (34M)
+      Contents: RTD1 vs Acclima analysis, stability plots, statistics
+      
+   b) 50uACurrentKestrel_Sat_Nov22/
+      Period: Saturday Nov 22 night
+      Data: Gems_Demo_2025_11_21_to_2025_11_25_23_59_59_20251124_124729.csv (4.7M)
+      Parsed: Gems_Demo_2025_11_21_to_2025_11_25_23_59_59_20251124_124729_parsed_20251124_125549.csv (34M)
+      Contents: RTD1 vs Acclima analysis, stability plots, statistics
+      
+   c) 50uACurrentKestrel_Sun_Nov23/
+      Period: Sunday Nov 23 night  
+      Data: Gems_Demo_2025_11_21_to_2025_11_25_23_59_59_20251124_124729.csv (4.7M)
+      Parsed: Gems_Demo_2025_11_21_to_2025_11_25_23_59_59_20251124_124729_parsed_20251124_125549.csv (34M)
+      Contents: RTD1 vs Acclima analysis, stability plots, statistics
+
+2. CALIBRATION TESTS (Different Excitation Currents)
+   --------------------------------------------------
+   
+   a) 50uACurrent1N4148NoBreadBoardKestrel/
+      Period: Nov 19-20, 2025
+      Excitation: 50µA with 1N4148 diodes, no breadboard
+      Data: Gems_Demo_2025_11_19_to_2025_11_20_23_59_59_20251120_124542.csv
+      Parsed: Gems_Demo_2025_11_19_to_2025_11_20_23_59_59_20251120_124542_parsed_20251120_124704.csv (8.9M)
+      Contents: RTD1 vs Acclima, stability analysis
+      
+   b) 250uACurrentKestrel/
+      Period: Nov 20-21, 2025
+      Excitation: 250µA
+      Data: Gems_Demo_2025_11_20_to_2025_11_21_23_59_59_20251121_100658.csv
+      Parsed: Gems_Demo_2025_11_20_to_2025_11_21_23_59_59_20251121_100658_parsed_20251121_100759.csv (15M)
+      Contents: RTD comparison, sampling interval check
+      
+   c) 1000uACurrentTest/
+      Period: Nov 11, 2025
+      Excitation: 1000µA (1mA)
+      Data: sdi12_data_20251111_170148.csv (local test data)
+      Contents: Individual temperature plots
+
+3. REFERENCE RESISTOR TESTING (Nov 24-Dec 2, 2025)
+   ------------------------------------------------
+   Configuration: RTD1 & RTD7 = reference resistors (99.88Ω, 99.78Ω)
+                  RTD2-6 = actual PT100 RTDs
+   
+   a) 100ohm_test_Mon_Nov24/
+      Period: Nov 24-25 (initial test, all 100Ω resistors)
+      Data: Gems_Demo_2025_11_24_to_2025_11_25_23_59_59_20251125_093550.csv (2.0M)
+      Parsed: Gems_Demo_2025_11_24_to_2025_11_25_23_59_59_20251125_093550_parsed_20251125_093812.csv (15M)
+      Contents: All channels read 0°C test
+      
+   b) 100ohm_test_Week_Nov25-Dec02/
+      Period: Nov 26 - Dec 2 (full week analysis)
+      Data: Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544.csv (9.4M)
+      Parsed: Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544_parsed_20251202_115559.csv (68M)
+      Contents: RTD2-6 vs Acclima correlation, reference resistor stability
+      KEY RESULTS: R² > 0.96 for all RTDs!
+
+4. NIGHTLY ANALYSIS (Nov 26 - Dec 1, 2025)
+   ----------------------------------------
+   Period: 7pm to 9am each night
+   Same data as weekly analysis
+   
+   Folders:
+   --------
+   a) RTD_Analysis_Tue_Nov26/
+   b) RTD_Analysis_Wed_Nov27/  ← Best night (R² > 0.97)
+   c) RTD_Analysis_Thu_Nov28/
+   d) RTD_Analysis_Fri_Nov29/
+   e) RTD_Analysis_Sat_Nov30/
+   f) RTD_Analysis_Sun_Dec01/
+   
+   Each contains:
+   - Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544.csv (9.4M)
+   - Gems_Demo_2025_11_25_to_2025_12_02_23_59_59_20251202_115544_parsed_20251202_115559.csv (68M)
+   - Correlation scatter plots
+   - Time series comparisons  
+   - Statistics CSV files
+   - Summary text file
+
+5. EARLY TESTS (Circuit Development)
+   ----------------------------------
+   
+   a) 50uACurrentTest/
+      Basic 50µA test (no Kestrel reference)
+      
+   b) 50uACurrent1N4148NoBreadboard/
+      Data: sdi12_data_20251112_175253.csv
+      
+   c) 50uACurrent1N4148NoBreadboardShort/
+      Short duration test
+      
+   d) 50uACurrent1N4148TestShort/
+      Data: sdi12_data_20251112_104410.csv
+
+DATA COMPLETENESS STATUS
+========================
+
+✅ All major analysis folders now have complete data files
+✅ Weekend tests (Fri, Sat, Sun) - Nov 21-25 data added
+✅ Calibration tests - parsed files added
+✅ Reference resistor week test - complete
+✅ All 6 nightly analysis folders - complete
+
+FOLDER SIZES (Approximate)
+===========================
+
+Weekend test folders (x3):    ~40M each (with parsed data)
+Calibration tests:            10-20M each
+Weekly analysis:              80M
+Nightly analysis (x6):        80M each
+Early tests:                  Small (<5M each)
+
+TOTAL DATA STORAGE:           ~900M across all folders
+
+USAGE NOTES
+===========
+
+1. Each folder is self-contained - can be moved or archived independently
+2. Raw CSV files are unmodified sensor data from database
+3. Parsed CSV files have expanded measurements for easier analysis
+4. All analysis scripts reference local data files
+5. No dependencies on rtgs-lab-tools/data/ directory
+
+MASTER DOCUMENTS
+================
+
+- DATA_ANALYSIS_SUMMARY.txt (in this directory)
+- COMPLETE_FOLDER_INVENTORY.txt (this file)
+- WEEKEND_SUMMARY.md (summary of Nov 21-23 tests)

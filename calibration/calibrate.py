@@ -498,12 +498,14 @@ def main():
                        help='Skip writing calibration to device (dry run)')
     parser.add_argument('--read-nvm', action='store_true',
                        help='Read and display NVM contents from device (no calibration)')
+    parser.add_argument('--set-rref', type=float,
+                       help='Directly set R_ref value (ohms) to all channels and save')
 
     args = parser.parse_args()
 
-    # Check if serial number is required
-    if not args.read_nvm and not args.serial:
-        parser.error("--serial is required for calibration (use --read-nvm to only read NVM)")
+    # Check if serial number is required (not needed for read-nvm or set-rref)
+    if not args.read_nvm and not args.set_rref and not args.serial:
+        parser.error("--serial is required for calibration (use --read-nvm or --set-rref for quick operations)")
 
     # Create calibration session
     session = CalibrationSession(port=args.port, baudrate=args.baudrate)
@@ -525,6 +527,42 @@ def main():
             else:
                 print("\n✗ Failed to read NVM")
                 return 1
+
+        # If --set-rref flag is set, directly set R_ref and exit
+        if args.set_rref:
+            print("\n" + "=" * 80)
+            print(f"SET R_REF MODE - Setting R_ref to {args.set_rref:.2f} Ω")
+            print("=" * 80)
+
+            # Flush and wait for device to be ready
+            session.flush_input()
+            time.sleep(0.5)
+
+            # Write R_ref to all 7 channels
+            for ch in range(7):
+                cmd = f"nvm_cal_rref {ch} {args.set_rref:.2f}"
+                print(f"  {cmd}")
+                session.send_command(cmd)
+                time.sleep(0.3)
+                # Read any response
+                for _ in range(3):
+                    line = session.read_line(timeout=0.1)
+                    if line:
+                        print(f"    {line}")
+
+            # Save NVM
+            print("\nSaving NVM...")
+            session.send_command("nvm_save")
+            time.sleep(0.5)
+
+            # Read response
+            for _ in range(10):
+                line = session.read_line(timeout=0.2)
+                if line:
+                    print(f"  {line}")
+
+            print(f"\n✓ R_ref set to {args.set_rref:.2f} Ω on all channels!")
+            return 0
 
         # Normal calibration mode
         # Read current R_ref from device before calibration

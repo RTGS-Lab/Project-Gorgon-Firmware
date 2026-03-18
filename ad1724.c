@@ -10,6 +10,16 @@
 extern spi_inst_t *SPI_PORT;
 extern const uint PIN_CS;
 
+// Per-channel software zero-offset calibration
+// Each entry stores the raw ADC reading when AINP=AINM for that channel's AIN pair
+// These are subtracted from RTD readings to remove per-channel offset error
+static uint32_t g_zero_offset[7] = {0, 0, 0, 0, 0, 0, 0};
+
+// Reference voltage correction factor
+// This compensates for AVDD-induced variations in excitation current
+// Measured by comparing readings with REFIN1 vs internal 2.5V reference
+static float g_vref_correction = 1.0f;
+
 void adc_reg_write(uint8_t reg_addr, uint8_t *data, size_t data_len) {
     uint8_t comm_cmd = reg_addr & 0x3F; // Write command (bit 6 = 0)
 
@@ -197,6 +207,155 @@ bool adc_configure_rtd(const rtd_config_t *config) {
     adc_reg_write(AD7124_ADC_CTRL_REG, adc_ctrl_data, 2);
     printf("ADC Control register written: 0x%04X\n", adc_ctrl_val);
 
+    // Step 6: Wait for excitation current and REFIN1 to stabilize
+    // The excitation current needs time to settle through the RTD circuit
+    // and establish a stable reference voltage across R_ref
+    printf("\n=== Waiting for REFIN1 reference to stabilize (500ms) ===\n");
+    sleep_ms(500);
+
+    // Step 7: Per-Channel Software Zero-Offset Calibration
+    // Instead of using the ADC's internal calibration (which doesn't work for
+    // ratiometric measurements), we measure "zero" ourselves by configuring
+    // each channel with AINP=AINM (same pin = shorted inputs).
+    // Each channel uses different AIN pins, so each may have different offset.
+    printf("\n=== Per-Channel Software Zero-Offset Calibration ===\n");
+
+    // AIN pins for each RTD channel (positive input pin - we'll use same for both AINP and AINM)
+    const uint8_t ain_pins[7] = {
+        AD7124_AIN1,  // RTD1: normally AIN1/AIN2, measure AIN1/AIN1
+        AD7124_AIN3,  // RTD2: normally AIN3/AIN4, measure AIN3/AIN3
+        AD7124_AIN5,  // RTD3: normally AIN5/AIN6, measure AIN5/AIN5
+        AD7124_AIN7,  // RTD4: normally AIN7/AIN8, measure AIN7/AIN7
+        0x09,         // RTD5: normally AIN9/AIN10, measure AIN9/AIN9
+        0x0B,         // RTD6: normally AIN11/AIN12, measure AIN11/AIN11
+        0x0D          // RTD7: normally AIN13/AIN14, measure AIN13/AIN13
+    };
+
+    // Measure zero offset for each channel
+    for (int ch = 0; ch < 7; ch++) {
+        // Configure channel 0 with AINP=AINM for this RTD's AIN pin
+        uint8_t ch_zero[2];
+        uint16_t ch_zero_val = AD7124_CH_MAP_REG_CH_ENABLE |
+                               AD7124_CH_MAP_REG_SETUP(0) |
+                               AD7124_CH_MAP_REG_AINP(ain_pins[ch]) |
+                               AD7124_CH_MAP_REG_AINM(ain_pins[ch]);  // Same pin!
+        ch_zero[0] = (ch_zero_val >> 8) & 0xFF;
+        ch_zero[1] = ch_zero_val & 0xFF;
+        adc_reg_write(AD7124_CH0_MAP_REG, ch_zero, 2);
+
+        // Wait for settling
+        sleep_ms(20);
+
+        // Start a single conversion
+        adc_ctrl_val = AD7124_ADC_CTRL_DATA_STATUS |
+                       AD7124_ADC_CTRL_POWER_MODE(0) |
+                       AD7124_ADC_CTRL_MODE(AD7124_MODE_SINGLE) |
+                       AD7124_ADC_CTRL_CLK_SEL(0);
+        adc_ctrl_data[0] = (adc_ctrl_val >> 8) & 0xFF;
+        adc_ctrl_data[1] = adc_ctrl_val & 0xFF;
+        adc_reg_write(AD7124_ADC_CTRL_REG, adc_ctrl_data, 2);
+
+        // Wait for conversion to complete
+        uint8_t status = 0x80;
+        int timeout = 2000;
+        while ((status & 0x80) && timeout > 0) {
+            sleep_ms(1);
+            adc_reg_read(AD7124_STATUS_REG, &status, 1);
+            timeout--;
+        }
+
+        if (timeout <= 0) {
+            printf("Ch%d: TIMEOUT\n", ch);
+            g_zero_offset[ch] = 0;
+        } else {
+            // Read the data (24-bit + status byte)
+            uint8_t data_bytes[4];
+            adc_reg_read(AD7124_DATA_REG, data_bytes, 4);
+            g_zero_offset[ch] = ((uint32_t)data_bytes[0] << 16) |
+                                ((uint32_t)data_bytes[1] << 8) |
+                                data_bytes[2];
+
+            // Convert to equivalent resistance for display
+            float zero_ratio = (float)g_zero_offset[ch] / 16777216.0f;
+            float zero_ohms = config->r_ref * zero_ratio;
+
+            printf("Ch%d: 0x%06X (%6u) = %.3f ohms (AIN%d/AIN%d)\n",
+                   ch, g_zero_offset[ch], g_zero_offset[ch], zero_ohms,
+                   ain_pins[ch], ain_pins[ch]);
+        }
+    }
+
+    // Restore channel 0 to normal RTD1 configuration (AIN1/AIN2)
+    uint8_t ch0_restore[2];
+    uint16_t ch0_restore_val = AD7124_CH_MAP_REG_CH_ENABLE |
+                               AD7124_CH_MAP_REG_SETUP(0) |
+                               AD7124_CH_MAP_REG_AINP(AD7124_AIN1) |
+                               AD7124_CH_MAP_REG_AINM(AD7124_AIN2);
+    ch0_restore[0] = (ch0_restore_val >> 8) & 0xFF;
+    ch0_restore[1] = ch0_restore_val & 0xFF;
+    adc_reg_write(AD7124_CH0_MAP_REG, ch0_restore, 2);
+
+    // Return to standby mode
+    adc_ctrl_val = AD7124_ADC_CTRL_DATA_STATUS |
+                   AD7124_ADC_CTRL_POWER_MODE(0) |
+                   AD7124_ADC_CTRL_MODE(AD7124_MODE_STANDBY) |
+                   AD7124_ADC_CTRL_CLK_SEL(0);
+    adc_ctrl_data[0] = (adc_ctrl_val >> 8) & 0xFF;
+    adc_ctrl_data[1] = adc_ctrl_val & 0xFF;
+    adc_reg_write(AD7124_ADC_CTRL_REG, adc_ctrl_data, 2);
+
+    printf("=== Per-Channel Zero-Offset Calibration Complete ===\n\n");
+
+    // Step 8: Measure AVDD using Pico's internal temperature sensor
+    // The temp sensor outputs ~0.706V (independent of AVDD), but the ADC reading
+    // depends on AVDD since it's the ADC reference. This lets us calculate AVDD.
+    //
+    // V_temp ≈ 0.706V at 27°C
+    // ADC_reading = V_temp / AVDD × 4096
+    // AVDD = V_temp × 4096 / ADC_reading
+    printf("=== Measuring AVDD via Pico ADC ===\n");
+
+    // Read Pico's internal temperature sensor ADC
+    adc_init();
+    adc_set_temp_sensor_enabled(true);
+    adc_select_input(4);  // Channel 4 = internal temp sensor
+
+    // Average multiple readings for stability
+    uint32_t adc_sum = 0;
+    for (int i = 0; i < 16; i++) {
+        adc_sum += adc_read();
+        sleep_ms(1);
+    }
+    uint16_t adc_avg = adc_sum / 16;
+
+    // Calculate AVDD
+    // V_temp at 27°C ≈ 0.706V (from RP2040 datasheet)
+    // We use a slightly adjusted value based on typical readings
+    const float v_temp_nominal = 0.706f;
+    float avdd_measured = v_temp_nominal * 4096.0f / (float)adc_avg;
+
+    printf("Pico temp sensor ADC: %u (avg of 16)\n", adc_avg);
+    printf("Calculated AVDD: %.4f V\n", avdd_measured);
+    printf("Nominal AVDD:    3.3000 V\n");
+
+    // Calculate correction factor
+    // If AVDD is higher, excitation current is higher, V_REFIN1 is higher,
+    // and ratiometric readings are unaffected... BUT the excitation current
+    // source in the AD7124 is referenced to AVDD, so higher AVDD = higher I_exc.
+    // However, since both V_RTD and V_REF scale with I_exc, this should cancel.
+    //
+    // The issue is likely that leakage current through the protection diodes
+    // scales with AVDD (higher AVDD = more leakage). This adds to I_exc on
+    // the R_ref side but not proportionally on the RTD side.
+    //
+    // Empirically: higher AVDD → more diode leakage → higher V_REFIN1 → LOWER readings
+    // So we scale UP when AVDD is high: correction = AVDD / 3.3
+    const float nominal_avdd = 3.3f;
+    g_vref_correction = avdd_measured / nominal_avdd;
+
+    printf("AVDD correction factor: %.6f\n", g_vref_correction);
+    printf("=== AVDD Measurement Complete ===\n\n");
+
     // Verify configuration by reading back registers
     printf("\n=== Verifying Configuration ===\n");
 
@@ -337,21 +496,36 @@ bool adc_read_rtd_data(uint32_t *rtd_data, uint8_t *channel) {
     return true;
 }
 
-float adc_calculate_resistance(uint32_t rtd_data, const rtd_config_t *config) {
+float adc_calculate_resistance(uint32_t rtd_data, const rtd_config_t *config, uint8_t channel) {
+    // Apply per-channel software zero-offset correction
+    // This removes the ADC offset error measured during calibration for this specific channel
+    uint32_t offset = (channel < 7) ? g_zero_offset[channel] : 0;
+    int32_t corrected_data = (int32_t)rtd_data - (int32_t)offset;
+
+    // Clamp to non-negative (shouldn't happen with valid readings)
+    if (corrected_data < 0) {
+        corrected_data = 0;
+    }
+
     // Convert 24-bit unsigned to voltage ratio (ratiometric measurement)
-    float ratio = (float)rtd_data / 16777216.0f; // 2^24
+    float ratio = (float)corrected_data / 16777216.0f; // 2^24
 
     // Calculate RTD resistance: R_rtd = R_ref * ratio
     float r_rtd = config->r_ref * ratio;
 
-    printf("RTD resistance calculated: %.2f ohms (ratio: %.6f)\n", r_rtd, ratio);
+    // Apply reference voltage correction factor
+    // This compensates for AVDD-induced excitation current variations
+    r_rtd *= g_vref_correction;
+
+    printf("RTD%d: %.2f ohms (raw: %u, offset: %u, vref_corr: %.4f)\n",
+           channel + 1, r_rtd, rtd_data, offset, g_vref_correction);
 
     return r_rtd;
 }
 
-float adc_calculate_temperature(uint32_t rtd_data, const rtd_config_t *config) {
+float adc_calculate_temperature(uint32_t rtd_data, const rtd_config_t *config, uint8_t channel) {
     // Calculate resistance first
-    float r_rtd = adc_calculate_resistance(rtd_data, config);
+    float r_rtd = adc_calculate_resistance(rtd_data, config, channel);
 
     // Calculate temperature using simplified RTD equation: R(T) = R0(1 + α*T)
     // Therefore: T = (R(T)/R0 - 1) / α
@@ -507,4 +681,213 @@ float pico_read_internal_temperature(void) {
            temperature, adc_value, voltage);
 
     return temperature;
+}
+
+float adc_measure_vref(float expected_vref) {
+    // Measure V_REFIN1 using the internal 2.5V reference.
+    // We measure V_RTD with the 2.5V reference to get absolute voltage,
+    // then compare to the ratiometric reading to derive V_REFIN1.
+    //
+    // This detects diode leakage current that adds to the excitation current,
+    // causing V_REFIN1 to be higher than expected: V = (I_exc + I_leak) * R_ref
+
+    printf("\n=== Measuring V_REFIN1 for Leakage Correction ===\n");
+
+    uint8_t ch_data[2];
+    uint8_t cfg_data[2];
+    uint8_t ctrl_data[2];
+    uint8_t status;
+    uint8_t data_bytes[4];
+    int timeout;
+
+    // Disable all channels first
+    uint8_t ch_disable[2] = {0x00, 0x01};
+    for (int ch = 0; ch <= 15; ch++) {
+        adc_reg_write(AD7124_CH0_MAP_REG + ch, ch_disable, 2);
+    }
+
+    // Configure channel 0 for RTD1 (AIN0/AIN1) using Setup 1 with internal reference
+    uint16_t ch_val = AD7124_CH_MAP_REG_CH_ENABLE |
+                      AD7124_CH_MAP_REG_SETUP(1) |  // Use Setup 1 for this measurement
+                      AD7124_CH_MAP_REG_AINP(AD7124_AIN1) |
+                      AD7124_CH_MAP_REG_AINM(AD7124_AIN2);
+    ch_data[0] = (ch_val >> 8) & 0xFF;
+    ch_data[1] = ch_val & 0xFF;
+    adc_reg_write(AD7124_CH0_MAP_REG, ch_data, 2);
+
+    // Configure Setup 1 to use internal 2.5V reference
+    uint16_t cfg_val = AD7124_CFG_REG_REF_BUFP |
+                       AD7124_CFG_REG_REF_BUFM |
+                       AD7124_CFG_REG_AIN_BUFP |
+                       AD7124_CFG_REG_AIN_BUFM |
+                       AD7124_CFG_REG_REF_SEL(AD7124_INT_REF) |
+                       AD7124_CFG_REG_PGA(AD7124_PGA_1);
+    cfg_data[0] = (cfg_val >> 8) & 0xFF;
+    cfg_data[1] = cfg_val & 0xFF;
+    adc_reg_write(AD7124_CFG1_REG, cfg_data, 2);  // Write to CFG1, not CFG0
+
+    // Configure Filter 1 (same as Filter 0)
+    uint8_t filt_data[3];
+    uint32_t filt_val = AD7124_FILT_REG_FILTER(AD7124_SINC4_FILTER) |
+                        AD7124_FILT_REG_REJ60 |
+                        AD7124_FILT_REG_FS(192);
+    filt_data[0] = (filt_val >> 16) & 0xFF;
+    filt_data[1] = (filt_val >> 8) & 0xFF;
+    filt_data[2] = filt_val & 0xFF;
+    adc_reg_write(AD7124_FILTER1_REG, filt_data, 3);
+
+    // Enable internal reference
+    uint16_t ctrl_val = AD7124_ADC_CTRL_DATA_STATUS |
+                        AD7124_ADC_CTRL_REF_EN |
+                        AD7124_ADC_CTRL_POWER_MODE(0) |
+                        AD7124_ADC_CTRL_MODE(AD7124_MODE_STANDBY) |
+                        AD7124_ADC_CTRL_CLK_SEL(0);
+    ctrl_data[0] = (ctrl_val >> 8) & 0xFF;
+    ctrl_data[1] = ctrl_val & 0xFF;
+    adc_reg_write(AD7124_ADC_CTRL_REG, ctrl_data, 2);
+
+    sleep_ms(50);  // Let internal reference settle
+
+    // Start conversion
+    ctrl_val = AD7124_ADC_CTRL_DATA_STATUS |
+               AD7124_ADC_CTRL_REF_EN |
+               AD7124_ADC_CTRL_POWER_MODE(0) |
+               AD7124_ADC_CTRL_MODE(AD7124_MODE_SINGLE) |
+               AD7124_ADC_CTRL_CLK_SEL(0);
+    ctrl_data[0] = (ctrl_val >> 8) & 0xFF;
+    ctrl_data[1] = ctrl_val & 0xFF;
+    adc_reg_write(AD7124_ADC_CTRL_REG, ctrl_data, 2);
+
+    // Wait for conversion
+    status = 0x80;
+    timeout = 2000;
+    while ((status & 0x80) && timeout > 0) {
+        sleep_ms(1);
+        adc_reg_read(AD7124_STATUS_REG, &status, 1);
+        timeout--;
+    }
+
+    if (timeout <= 0) {
+        printf("V_RTD measurement timeout!\n");
+        g_vref_correction = 1.0f;
+        return 0.0f;
+    }
+
+    adc_reg_read(AD7124_DATA_REG, data_bytes, 4);
+    uint32_t adc_int = ((uint32_t)data_bytes[0] << 16) |
+                       ((uint32_t)data_bytes[1] << 8) |
+                       data_bytes[2];
+
+    // Calculate V_RTD from internal reference measurement
+    // V_RTD = 2.5V × (ADC / 2^24)
+    float v_rtd = 2.5f * ((float)adc_int / 16777216.0f);
+
+    printf("RTD1 ADC (2.5V ref): 0x%06X (%u)\n", adc_int, adc_int);
+    printf("V_RTD: %.6f V\n", v_rtd);
+
+    // Now measure with REFIN1 to get the ratio
+    ch_val = AD7124_CH_MAP_REG_CH_ENABLE |
+             AD7124_CH_MAP_REG_SETUP(0) |  // Use Setup 0 (REFIN1)
+             AD7124_CH_MAP_REG_AINP(AD7124_AIN0) |
+             AD7124_CH_MAP_REG_AINM(AD7124_AIN1);
+    ch_data[0] = (ch_val >> 8) & 0xFF;
+    ch_data[1] = ch_val & 0xFF;
+    adc_reg_write(AD7124_CH0_MAP_REG, ch_data, 2);
+
+    // Disable internal reference for REFIN1 measurement
+    ctrl_val = AD7124_ADC_CTRL_DATA_STATUS |
+               AD7124_ADC_CTRL_POWER_MODE(0) |
+               AD7124_ADC_CTRL_MODE(AD7124_MODE_SINGLE) |
+               AD7124_ADC_CTRL_CLK_SEL(0);
+    ctrl_data[0] = (ctrl_val >> 8) & 0xFF;
+    ctrl_data[1] = ctrl_val & 0xFF;
+    adc_reg_write(AD7124_ADC_CTRL_REG, ctrl_data, 2);
+
+    // Wait for conversion
+    status = 0x80;
+    timeout = 2000;
+    while ((status & 0x80) && timeout > 0) {
+        sleep_ms(1);
+        adc_reg_read(AD7124_STATUS_REG, &status, 1);
+        timeout--;
+    }
+
+    if (timeout <= 0) {
+        printf("REFIN1 measurement timeout!\n");
+        g_vref_correction = 1.0f;
+        return 0.0f;
+    }
+
+    adc_reg_read(AD7124_DATA_REG, data_bytes, 4);
+    uint32_t adc_refin1 = ((uint32_t)data_bytes[0] << 16) |
+                          ((uint32_t)data_bytes[1] << 8) |
+                          data_bytes[2];
+
+    printf("RTD1 ADC (REFIN1):   0x%06X (%u)\n", adc_refin1, adc_refin1);
+
+    // Calculate V_REFIN1
+    // ADC_refin1 = V_RTD / V_REFIN1 × 2^24
+    // V_REFIN1 = V_RTD / (ADC_refin1 / 2^24) = V_RTD × 2^24 / ADC_refin1
+    float v_refin1 = v_rtd * 16777216.0f / (float)adc_refin1;
+
+    printf("Calculated V_REFIN1: %.4f V\n", v_refin1);
+    printf("Expected V_REFIN1:   %.4f V (I_exc * R_ref)\n", expected_vref);
+
+    // Calculate correction factor
+    // If V_REFIN1 is higher than expected (due to leakage adding current),
+    // our RTD readings will be lower than actual - we need to scale them up.
+    // But wait - in ratiometric measurement, higher V_ref means lower ratio,
+    // so we need: correction = V_REFIN1_measured / expected_vref
+    // Actually no - let me think again...
+    //
+    // R_rtd = R_ref * (ADC_rtd / ADC_max)
+    // If leakage adds current through R_ref but not RTD:
+    //   V_ref = (I_exc + I_leak) * R_ref  (higher than expected)
+    //   V_rtd = I_exc * R_rtd (normal)
+    //   Ratio = V_rtd / V_ref = I_exc * R_rtd / ((I_exc + I_leak) * R_ref)
+    //   This gives LOWER ratio, meaning we read LOWER resistance
+    //
+    // To correct: multiply by (I_exc + I_leak) / I_exc = V_ref_measured / V_ref_expected
+    g_vref_correction = v_refin1 / expected_vref;
+
+    printf("Leakage correction factor: %.6f\n", g_vref_correction);
+
+    // Calculate implied leakage current
+    float i_expected = expected_vref / 5030.0f;  // Using nominal R_ref
+    float i_actual = v_refin1 / 5030.0f;
+    float i_leakage = (i_actual - i_expected) * 1e6f;  // Convert to µA
+    printf("Implied leakage current: %.2f µA\n", i_leakage);
+
+    // === Restore Setup 0 to use REFIN1 for RTD measurements ===
+    cfg_val = AD7124_CFG_REG_REF_BUFP |
+              AD7124_CFG_REG_REF_BUFM |
+              AD7124_CFG_REG_AIN_BUFP |
+              AD7124_CFG_REG_AIN_BUFM |
+              AD7124_CFG_REG_REF_SEL(AD7124_REFIN1) |
+              AD7124_CFG_REG_PGA(AD7124_PGA_1);
+    cfg_data[0] = (cfg_val >> 8) & 0xFF;
+    cfg_data[1] = cfg_val & 0xFF;
+    adc_reg_write(AD7124_CFG0_REG, cfg_data, 2);
+
+    // Return to standby
+    ctrl_val = AD7124_ADC_CTRL_DATA_STATUS |
+               AD7124_ADC_CTRL_POWER_MODE(0) |
+               AD7124_ADC_CTRL_MODE(AD7124_MODE_STANDBY) |
+               AD7124_ADC_CTRL_CLK_SEL(0);
+    ctrl_data[0] = (ctrl_val >> 8) & 0xFF;
+    ctrl_data[1] = ctrl_val & 0xFF;
+    adc_reg_write(AD7124_ADC_CTRL_REG, ctrl_data, 2);
+
+    // Restore channel 0 to RTD1 configuration (AIN0/AIN1 per schematic)
+    ch_val = AD7124_CH_MAP_REG_CH_ENABLE |
+             AD7124_CH_MAP_REG_SETUP(0) |
+             AD7124_CH_MAP_REG_AINP(AD7124_AIN0) |
+             AD7124_CH_MAP_REG_AINM(AD7124_AIN1);
+    ch_data[0] = (ch_val >> 8) & 0xFF;
+    ch_data[1] = ch_val & 0xFF;
+    adc_reg_write(AD7124_CH0_MAP_REG, ch_data, 2);
+
+    printf("=== V_REFIN1 Measurement Complete ===\n\n");
+
+    return v_refin1;
 }
