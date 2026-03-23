@@ -50,12 +50,21 @@ bool adg708_select_channel(uint8_t channel) {
     // Convert channel (1-8) to address (0-7)
     uint8_t address = channel - 1;
 
-    // Set address lines based on channel number
+    // Disable mux before changing address lines to prevent excitation current
+    // from routing through unintended channels during the address transition.
+    // The ADG708 address lines change asynchronously, so without disabling first,
+    // intermediate states can momentarily connect wrong channels.
+    gpio_put(mux_config.pin_en, 0);
+
+    // Set address lines while mux is disabled
     gpio_put(mux_config.pin_a0, (address >> 0) & 0x01);
     gpio_put(mux_config.pin_a1, (address >> 1) & 0x01);
     gpio_put(mux_config.pin_a2, (address >> 2) & 0x01);
 
-    // Enable the mux (active HIGH)
+    // Short stabilization delay to allow address lines to settle before enabling
+    sleep_us(100);
+
+    // Re-enable the mux with the new address set (active HIGH)
     gpio_put(mux_config.pin_en, 1);
 
     printf("ADG708: Switch %d selected (A2=%d, A1=%d, A0=%d, EN=1)\n",
