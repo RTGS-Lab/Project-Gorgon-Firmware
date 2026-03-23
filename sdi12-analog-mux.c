@@ -29,12 +29,32 @@ const uint PIN_SDI12_DATA = 10; // GPIO10 for SDI-12 data line (needs level shif
 static rtd_config_t global_rtd_config;
 static float last_temperature = 0.0f;
 
+// Per-channel calibration data loaded from NVM at startup
+static calibration_info_t g_cal_info;
+
 // Multi-channel RTD storage (RTDs 1-7)
 #define NUM_RTDS 7
 // Support for RTDs 1-7
 
 static float rtd_temperatures[NUM_RTDS] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 static float rtd_resistances[NUM_RTDS] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+
+// Helper: start a single conversion and wait for it to complete, then read result.
+// Returns true on success, false on timeout.
+static bool do_conversion(uint32_t *data, uint8_t *ch) {
+    adc_start_single_conversion();
+    uint8_t status;
+    int timeout = 100;
+    while (timeout > 0) {
+        adc_reg_read(AD7124_STATUS_REG, &status, 1);
+        if ((status & 0x80) == 0) {
+            return adc_read_rtd_data(data, ch);
+        }
+        sleep_ms(10);
+        timeout--;
+    }
+    return false;
+}
 
 // Perform LED initialisation
 int pico_led_init(void) {
@@ -86,77 +106,51 @@ bool calibration_measure_rtd(uint8_t channel) {
         return false;
     }
 
-    // Wait for settling
+    // Wait for mux and analog front-end to settle after channel switch
     sleep_ms(20);
 
-    // Dummy read to charge capacitors
-    adc_start_single_conversion();
-    uint8_t status;
-    int timeout = 100;
-    bool conversion_ready = false;
-
-    while (timeout > 0) {
-        adc_reg_read(AD7124_STATUS_REG, &status, 1);
-        if ((status & 0x80) == 0) {
-            conversion_ready = true;
-            break;
+    // Discard 3 initial conversions to flush the ADC filter and allow residual
+    // charge from the previous channel to dissipate (per technical review §7.2)
+    printf("Discarding 3 initial conversions to flush ADC filter...\n");
+    for (int i = 0; i < 3; i++) {
+        uint32_t dummy_data;
+        uint8_t dummy_channel;
+        if (!do_conversion(&dummy_data, &dummy_channel)) {
+            printf("ERROR: Dummy conversion %d timeout\n", i + 1);
+            return false;
         }
-        sleep_ms(10);
-        timeout--;
     }
 
-    if (!conversion_ready) {
-        printf("ERROR: Dummy conversion timeout\n");
-        return false;
-    }
+    // Take 3 readings and average for a stable calibration measurement.
+    // Use NOMINAL r_ref so the Python calibration formula is mathematically correct.
+    rtd_config_t cal_config = global_rtd_config;
+    cal_config.r_ref = 5030.0f;  // Use nominal value, not calibrated value
 
-    uint32_t dummy_data;
-    uint8_t dummy_channel;
-    adc_read_rtd_data(&dummy_data, &dummy_channel);
+    float resistance_sum = 0.0f;
+    float temperature_sum = 0.0f;
+    const int NUM_SAMPLES = 3;
 
-    // Actual measurement
-    adc_start_single_conversion();
-    timeout = 100;
-    conversion_ready = false;
-
-    while (timeout > 0) {
-        adc_reg_read(AD7124_STATUS_REG, &status, 1);
-        if ((status & 0x80) == 0) {
-            conversion_ready = true;
-            break;
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+        uint32_t rtd_data;
+        uint8_t read_channel;
+        if (!do_conversion(&rtd_data, &read_channel)) {
+            printf("ERROR: Conversion %d timeout\n", i + 1);
+            return false;
         }
-        sleep_ms(10);
-        timeout--;
+        resistance_sum += adc_calculate_resistance(rtd_data, &cal_config, rtd_num);
+        temperature_sum += adc_calculate_temperature(rtd_data, &cal_config, rtd_num);
     }
 
-    if (!conversion_ready) {
-        printf("ERROR: Conversion timeout\n");
-        return false;
-    }
+    float resistance = resistance_sum / NUM_SAMPLES;
+    float temperature = temperature_sum / NUM_SAMPLES;
 
-    // Read and display data
-    uint32_t rtd_data;
-    uint8_t read_channel;
-    if (adc_read_rtd_data(&rtd_data, &read_channel)) {
-        // Create a temporary config with NOMINAL r_ref for calibration measurements
-        // This ensures the Python calibration formula is mathematically correct
-        rtd_config_t cal_config = global_rtd_config;
-        cal_config.r_ref = 5030.0f;  // Use nominal value, not calibrated value
+    rtd_resistances[rtd_num] = resistance;
+    rtd_temperatures[rtd_num] = temperature;
 
-        float resistance = adc_calculate_resistance(rtd_data, &cal_config, rtd_num);
-        float temperature = adc_calculate_temperature(rtd_data, &cal_config, rtd_num);
+    printf("RTD %d: %.2fΩ, %.2f°C (avg of %d samples)\n",
+           channel, resistance, temperature, NUM_SAMPLES);
 
-        rtd_resistances[rtd_num] = resistance;
-        rtd_temperatures[rtd_num] = temperature;
-
-        printf("RTD %d: %.2fΩ, %.2f°C (Raw: 0x%06X)\n",
-               channel, resistance, temperature, rtd_data);
-
-        return true;
-    } else {
-        printf("ERROR: Failed to read RTD data\n");
-        return false;
-    }
+    return true;
 }
 
 // SDI-12 measurement callback
@@ -220,87 +214,62 @@ bool sdi12_measurement_callback(uint8_t measurement_index, sdi12_measurement_t *
         return false;
     }
 
-    // Step 3: Wait for mux to settle and excitation current to stabilize
+    // Step 3: Wait for mux and analog front-end to settle after channel switch
     sleep_ms(20);
 
-    // Step 4: Perform a DUMMY read to pre-charge input capacitors
-    // This prevents high resistance readings on first power-up
-    printf("Performing dummy read to charge input capacitors...\n");
-    adc_start_single_conversion();
+    // Step 4: Apply per-channel calibrated r_ref (§7.3 channel-specific calibration).
+    // Each channel has slightly different effective path impedance, so a single
+    // global r_ref is insufficient. Use the per-channel value stored in NVM.
+    global_rtd_config.r_ref = g_cal_info.r_ref_calibrated[rtd_num];
+    printf("RTD %d: using r_ref=%.2f ohms (channel-specific)\n",
+           measurement_index, global_rtd_config.r_ref);
 
-    uint8_t status;
-    int timeout = 100;  // 100 attempts max
-    bool conversion_ready = false;
-
-    while (timeout > 0) {
-        adc_reg_read(AD7124_STATUS_REG, &status, 1);
-        if ((status & 0x80) == 0) {  // RDY bit is low = data ready
-            conversion_ready = true;
-            break;
+    // Step 5: Discard 3 initial conversions to flush the ADC sinc filter and allow
+    // residual charge from the previous channel to dissipate (per technical review §7.2).
+    // A single dummy read is insufficient because the sinc filter has multiple internal
+    // stages that require several conversion cycles to fully reflect the new input.
+    printf("Discarding 3 initial conversions to flush ADC filter...\n");
+    for (int i = 0; i < 3; i++) {
+        uint32_t dummy_data;
+        uint8_t dummy_ch;
+        if (!do_conversion(&dummy_data, &dummy_ch)) {
+            printf("ERROR: Dummy conversion %d timeout for RTD %d\n", i + 1, measurement_index);
+            return false;
         }
-        sleep_ms(10);
-        timeout--;
+        printf("Dummy read %d: 0x%06X (discarded)\n", i + 1, dummy_data);
     }
 
-    if (!conversion_ready) {
-        printf("ERROR: Dummy conversion timeout for RTD %d\n", measurement_index);
-        return false;
-    }
+    // Step 6: Take 8 readings and average to reduce noise and improve repeatability.
+    float resistance_sum = 0.0f;
+    float temperature_sum = 0.0f;
+    const int NUM_SAMPLES = 8;
 
-    // Read and discard the dummy data
-    uint32_t dummy_data;
-    uint8_t dummy_channel;
-    if (adc_read_rtd_data(&dummy_data, &dummy_channel)) {
-        printf("Dummy read: 0x%06X (discarded)\n", dummy_data);
-    }
-
-    // Step 5: NOW start the actual conversion
-    adc_start_single_conversion();
-
-    // Step 6: Wait for actual conversion to complete (poll RDY bit)
-    timeout = 100;  // Reset timeout
-    conversion_ready = false;
-
-    while (timeout > 0) {
-        adc_reg_read(AD7124_STATUS_REG, &status, 1);
-        if ((status & 0x80) == 0) {  // RDY bit is low = data ready
-            conversion_ready = true;
-            break;
+    for (int i = 0; i < NUM_SAMPLES; i++) {
+        uint32_t rtd_data;
+        uint8_t read_channel;
+        if (!do_conversion(&rtd_data, &read_channel)) {
+            printf("ERROR: Conversion %d timeout for RTD %d\n", i + 1, measurement_index);
+            return false;
         }
-        sleep_ms(10);
-        timeout--;
+        resistance_sum += adc_calculate_resistance(rtd_data, &global_rtd_config, rtd_num);
+        temperature_sum += adc_calculate_temperature(rtd_data, &global_rtd_config, rtd_num);
     }
 
-    if (!conversion_ready) {
-        printf("ERROR: Conversion timeout for RTD %d\n", measurement_index);
-        return false;
-    }
+    float resistance = resistance_sum / NUM_SAMPLES;
+    float temperature = temperature_sum / NUM_SAMPLES;
 
-    // Step 7: Read the actual data
-    uint32_t rtd_data;
-    uint8_t read_channel;
-    if (adc_read_rtd_data(&rtd_data, &read_channel)) {
-        // Calculate resistance and temperature (rtd_num is 0-based channel index)
-        float resistance = adc_calculate_resistance(rtd_data, &global_rtd_config, rtd_num);
-        float temperature = adc_calculate_temperature(rtd_data, &global_rtd_config, rtd_num);
+    // Store results and fill SDI-12 response
+    rtd_resistances[rtd_num] = resistance;
+    rtd_temperatures[rtd_num] = temperature;
 
-        // Store in measurement data structure
-        rtd_resistances[rtd_num] = resistance;
-        rtd_temperatures[rtd_num] = temperature;
+    data->values[0] = temperature;
+    data->num_values = 1;
+    data->time_seconds = 0; // Data ready immediately
 
-        // Fill in SDI-12 measurement response
-        data->values[0] = temperature;
-        data->num_values = 1;
-        data->time_seconds = 0; // Data ready immediately
+    printf("RTD %d: %.2fΩ, %.2f°C (avg of %d samples)\n",
+           measurement_index, resistance, temperature, NUM_SAMPLES);
 
-        printf("RTD %d: %.2fΩ, %.2f°C (Raw: 0x%06X)\n",
-               measurement_index, resistance, temperature, rtd_data);
-
-        return true;
-    } else {
-        printf("ERROR: Failed to read data for RTD %d\n", measurement_index);
-        return false;
-    }
+    return true;
 }
 
 int main(){
@@ -322,6 +291,9 @@ int main(){
         printf("NVM using default values (first boot or corrupted data)\n");
         nvm_get_defaults(&nvm_data);
     }
+
+    // Cache per-channel calibration data for use in measurement callbacks
+    g_cal_info = nvm_data.calibration;
 
     // Initialize ADG708 analog mux
     printf("\n=== Initializing ADG708 Analog Mux ===\n");
